@@ -1,0 +1,258 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+enum AuthProvider {
+    GOOGLE
+    FACEBOOK
+    TWITTER
+    GITHUB
+    APPLE
+    EMAIL_PASSWORD
+    PHONE_OTP
+    QR_CODE
+    SSO
+    GUEST
+    MAGIC_LINK
+}
+
+enum AuthStatus {
+    ACTIVE
+    EXPIRED
+    REVOKED
+    BLOCKED
+    SUSPENDED
+}
+
+enum DeviceType {
+    MOBILE_IOS
+    MOBILE_ANDROID
+    DESKTOP_WINDOWS
+    DESKTOP_MACOS
+    DESKTOP_LINUX
+    TABLET_IOS
+    TABLET_ANDROID
+    DESKTOP
+    WEARABLE
+    UNKNOWN
+}
+
+enum AccountStatus {
+    ACTIVE
+    INACTIVE
+    SUSPENDED
+    BANNED
+    DELETED
+    LOCKED
+    PENDING
+}
+
+enum UserRole {
+    USER
+    DRIVER
+    ADMIN
+    BUSINESS_OWNER
+    FLEET_MANAGER
+    SUPER_ADMIN
+}
+
+enum KycStatus {
+    PENDING
+    IN_REVIEW
+    APPROVED
+    REJECTED
+    EXPIRED
+}
+
+enum SessionType {
+    LOGIN
+    REFRESH
+    API_KEY
+    TEMPORARY
+    QR_CODE
+}
+
+// Core User Model - Cleaned and focused on essential fields
+model User {
+    id                String        @id @default(cuid())
+    email             String        @unique
+    firstName         String
+    lastName          String
+    phone             String?
+    dataOfBirth       DateTime?
+    avatar            String?
+    roles             UserRole[]    @default([USER])
+    createdAt         DateTime      @default(now())
+    updatedAt         DateTime      @updatedAt
+    isActive          Boolean       @default(true)
+    isVerified        Boolean       @default(false)
+    kycStatus         KycStatus     @default(PENDING)
+    emailVerified     Boolean       @default(false)
+    phoneVerified     Boolean       @default(false)
+    lastLoginAt       DateTime?
+    accountStatus     AccountStatus @default(PENDING)
+    preferredLanguage String?       @default("en")
+    timezone          String?       @default("UTC")
+
+    // Authentication details
+    authMethods      AuthMethod[]
+    sessions         UserSession[]
+    devices          UserDevice[]
+    SecuritySettings SecuritySettings?
+    DriverProfile    DriverProfile?
+    UserPreferences  UserPreferences?
+    UserAddress      UserAddress[]
+
+    @@index([email])
+    @@index([phone])
+    @@index([roles])
+    @@index([accountStatus])
+    @@index([kycStatus])
+    @@map("users")
+}
+
+// Authentication Methods - Support multiple auth types per user
+model AuthMethod {
+    id             String       @id @default(cuid())
+    userId         String
+    provider       AuthProvider
+    providerId     String?      @unique
+    identifier     String // Email, phone number, or username
+    hashedPassword String? // For EMAIL_PASSWORD
+    isVerified     Boolean      @default(false)
+    isPrimary      Boolean      @default(false)
+    isEnabled      Boolean      @default(true)
+    metadata       Json?
+    lastUsedAt     DateTime?
+    createdAt      DateTime     @default(now())
+    updatedAt      DateTime     @updatedAt
+
+    // Relations
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, provider]) // User can have only one auth method per provider
+    @@index([provider, identifier])
+    @@index([userId, isPrimary]) // For quick access to primary auth method
+    @@map("auth_methods")
+}
+
+// User Sessions - Track user sessions for security and analytics
+model UserSession {
+    id             String      @id @default(cuid())
+    userId         String
+    sessionToken   String      @unique
+    refreshToken   String      @unique
+    sessionType    SessionType @default(LOGIN)
+    deviceId       String?
+    ipAddress      String
+    userAgent      String
+    location       String? // City, Country
+    status         AuthStatus  @default(ACTIVE)
+    expiresAt      DateTime
+    lastAccessedAt DateTime    @default(now())
+    createdAt      DateTime    @default(now())
+
+    // Relations
+    user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    device UserDevice? @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+
+    @@index([userId, status])
+    @@index([sessionToken])
+    @@index([expiresAt])
+    @@map("user_sessions")
+}
+
+// User Devices - Track devices used by users
+model UserDevice {
+    id          String     @id @default(cuid())
+    userId      String
+    deviceId    String     @unique
+    deviceType  DeviceType
+    deviceName  String?
+    pushToken   String? // For push notifications
+    fingerprint String? // For device fingerprinting
+    isVerified  Boolean    @default(false)
+    isTrusted   Boolean    @default(false)
+    lastSeenAt  DateTime   @default(now())
+    createdAt   DateTime   @default(now())
+
+    user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+    sessions UserSession[]
+
+    @@unique([userId, deviceId]) // Unique device per user
+    @@index([userId, isVerified])
+    @@map("user_devices")
+}
+
+// Security Settings - User security preferences
+model SecuritySettings {
+    id                 String   @id @default(cuid())
+    userId             String   @unique
+    twoFactorEnabled   Boolean  @default(false)
+    twoFactorMethod    String? // e.g., "TOTP", "SMS",
+    backupCodes        String[] @default([]) // Array of backup codes
+    loginAlertsEnabled Boolean  @default(true)
+    sessionTimeout     Int      @default(7200) // Seconds
+    maxActiveSessions  Int      @default(5) // Max active sessions
+    allowedIpRanges    String[] @default([]) // Array of allowed IP ranges
+    blockedIpRanges    String[] @default([]) // Array of blocked IP ranges
+    createdAt          DateTime @default(now())
+    updatedAt          DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("security_settings")
+}
+
+// User Preferences - User-specific settings
+model UserPreferences {
+    id            String   @id @default(cuid())
+    userId        String   @unique
+    theme         String   @default("light") // "light", "dark", "system"
+    language      String   @default("en") // Default language
+    currency      String   @default("USD") // Default currency
+    distanceUnit  String   @default("km") // "km" or "mi"
+    notifications Json     @default("{}") // JSON object for notification settings
+    privacy       Json     @default("{}") // JSON object for privacy settings
+    accessibility Json     @default("{}") // JSON object for accessibility settings
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("user_preferences")
+}
+
+// User Address - User address for delivery or billing
+model UserAddress {
+    id         String   @id @default(cuid())
+    userId     String
+    type       String // e.g., "home", "work", "billing"
+    label      String // e.g., "Home", "Office"
+    address    String // Full address
+    city       String
+    state      String
+    postalCode String
+    country    String
+    latitude   Float?
+    longitude  Float?
+    isDefault  Boolean  @default(false)
+    createdAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId, isDefault])
+    @@map("user_addresses")
+}
+
+model DriverProfile {
+    id     String @id @default(cuid())
+    userId String @unique
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
